@@ -41,10 +41,12 @@ stab_mixed <- function(data,
 
         data <- data.frame(data)
 
+        # Store results from each n.genes
+        results_combined <- list()
+
         for(n in 1:length(n.genes)){
 
-                # Store results from each n.genes
-                results_combined <- list()
+
 
                 # possible combinations of size n.genes
                 combinations <- combn(unique(data[, which(colnames(data) == target)]), n.genes[n])
@@ -179,7 +181,11 @@ stab_mixed <- function(data,
                 }
 
 
-        results_combined[[i]] <- dplyr::bind_rows(results)
+                close(pb)
+                parallel::stopCluster(cl)
+
+
+        results_combined[[n]] <- dplyr::bind_rows(results)
 
         }
 
