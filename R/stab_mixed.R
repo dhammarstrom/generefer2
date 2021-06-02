@@ -37,8 +37,6 @@ stab_mixed <- function(data,
                         cores = NULL,
                        progress=TRUE){
 
-        results <- list()
-
         data <- data.frame(data)
 
         # Store results from each n.genes
@@ -51,141 +49,22 @@ stab_mixed <- function(data,
                 # possible combinations of size n.genes
                 combinations <- combn(unique(data[, which(colnames(data) == target)]), n.genes[n])
 
-                # function for calculating ICC based on user defined random effects and bootstrap model
-                icc.calc <- function(model){
-                        icc <- as.numeric(data.frame(lme4::VarCorr(model))[1,4]) / sum(as.numeric(data.frame(lme4::VarCorr(model))[,4]))
-                        return(icc)
-                }
+
+                results_combined[[n]] <-  stab_mixed_parallel(data = data,
+                                                              combinations = combinations,
+                                                              cores = cores,
+                                                              progress = progress,
+
+                                                              response = response,
+                                                              target = target,
+                                                              fixed = fixed.effects,
+                                                              random = random.effect,
+                                                              p.threshold = p.threshold,
+                                                              icc.interval = icc.interval,
+                                                              icc.type = icc.type,
+                                                              n.sims = n.sims)
 
 
-
-                # set up parallel processing using the foreach package
-                if(is.null(cores)) {
-                        cores_detected <- parallel::detectCores()
-                        cl <- parallel::makeCluster(cores_detected[1])
-                        doSNOW::registerDoSNOW(cl)
-                }
-
-                if(!is.null(cores)) {
-                        if(!is.numeric(cores)) stop("Number of cores must be specified as an integer or NULL")
-                        cl <- parallel::makeCluster(cores)
-                        doSNOW::registerDoSNOW(cl)
-                }
-
-
-
-                # Progress bar (should work on linux also)
-                if(progress==TRUE){
-                        iterations <- ncol(combinations)
-                        pb <- txtProgressBar(max = iterations, style = 3)
-                        progress <- function(n) setTxtProgressBar(pb, n)
-                        opts <- list(progress = progress)
-                } else {
-
-                        iterations <- ncol(combinations)
-                        opts <- list()
-
-                }
-
-
-
-                results <- foreach::foreach(i = 1:ncol(combinations),
-                                   .packages = c("lme4", "dplyr"),
-                                   .options.snow = opts) %dopar% {
-
-
-
-                         # A result data frame for icc
-                         results.icc <- data.frame(gene.combination = NA,
-                                                   icc    = NA ,
-                                                   icc.l  = NA ,
-                                                   icc.u  = NA )
-
-
-
-                         # A data frame to store p-values from global test
-                         results.lrt <- data.frame(p.val =  NA)
-
-
-
-
-
-                        genes <- combinations[,i] # genes in the specified combination
-                        results.icc[1,1] <- paste(genes[1:n.genes[n]], collapse=":") # gene combination
-                        subset.data <- data[data[, which(colnames(data) == target)] %in% genes,] # subset of genes used in iteration
-
-
-
-                                response.target <- paste0(response, "~", target)
-                                full.f <- paste(response.target, fixed.effects, sep="*", collapse = "+")
-
-                                # combine to formula
-                                full.f <- as.formula(paste(full.f, random.effect, sep = "+"))
-                                reduced.f <- as.formula(paste(response.target, random.effect, sep = "+"))
-
-                                reduced.mod <- lme4::lmer(reduced.f, data = subset.data,
-                                                          REML = FALSE,
-                                                          control = lme4::lmerControl(calc.derivs = FALSE))
-                                full.mod <- lme4::lmer(full.f, data=subset.data,
-                                                       REML=FALSE,
-                                                       control = lme4::lmerControl(calc.derivs = FALSE))
-                                results.lrt[1, 1] <- data.frame(anova(full.mod, reduced.mod))[2,8]
-
-
-
-                                if(any(results.lrt[1, 1] < p.threshold)) h.test <- TRUE else h.test <- FALSE
-
-
-
-                        # If an hypothesis test is significant
-                        # do not calculate bootstrap ICC
-                        if(h.test == TRUE) {
-                                results.icc[1,2]<-NA
-                                results.icc[1,3]<-NA
-                                results.icc[1,4]<-NA
-                        } else {
-                                # If no t-values over critical t
-                                # calculate bootstrap ICC
-
-                                # fit model for ICC calculations
-                                icc.mod <- lme4::lmer(reduced.f,
-                                                      REML = TRUE,
-                                                      control = lme4::lmerControl(calc.derivs = FALSE),
-                                                      data = subset.data)
-
-                                b <- lme4::bootMer(icc.mod, icc.calc, use.u = FALSE, nsim = n.sims)
-
-                                ci <- boot::boot.ci(b, conf = icc.interval, type = icc.type)
-
-                                if(icc.type=="basic"){
-                                        cis<-c(data.frame(ci[4])[1,4], data.frame(ci[4])[1,5])
-                                }
-                                if(icc.type=="norm"){
-                                        cis<-c(data.frame(ci[4])[1,2], data.frame(ci[4])[1,3])
-                                }
-                                if(icc.type=="perc"){
-                                        cis<-c(data.frame(ci[4])[1,4], data.frame(ci[4])[1,5])
-                                }
-
-                                results.icc[1, 2] <- b$t0
-                                results.icc[1, 3] <- cis[1]
-                                results.icc[1, 4] <- cis[2]
-
-                        }
-
-                                r <- cbind(results.icc, results.lrt)
-                                r$n.genes <- n.genes[n]
-
-                                r
-
-                }
-
-
-                close(pb)
-                parallel::stopCluster(cl)
-
-
-        results_combined[[n]] <- dplyr::bind_rows(results)
 
         }
 
